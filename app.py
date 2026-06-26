@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import text
 
-st.set_page_config(page_title="Warehouse Station", page_icon="📦", layout="centered")
-st.title("📦 Smart-Format Warehouse System")
+st.set_page_config(page_title="Управление складом", page_icon="📦", layout="centered")
+st.title("📦 Управление складом")
 
 TABLE_NAME = "warehouse_inventory"  
 conn = st.connection("postgresql", type="sql")
@@ -13,14 +13,14 @@ def clean_alphanumeric(text_input):
     return "".join(c for c in text_input if c.isalnum())
 
 # Split the app into two clean views
-tab1, tab2 = st.tabs(["⚡ Station Operations", "📊 Inventory Browser"])
+tab1, tab2 = st.tabs(["⚡ Найти/добавить", "📊 Список"])
 
 # =========================================================
 # TAB 1: DAILY OPERATIONS (LOOKUP, TAKE, ADD)
 # =========================================================
 with tab1:
-    st.header("🔍 Find & Take Items")
-    lookup_sku = st.text_input("Scan or Type SKU (Any format, case-insensitive):", key="lookup_field").strip()
+    st.header("🔍 Найти/изъять товар")
+    lookup_sku = st.text_input("Введите артикул:", key="lookup_field").strip()
 
     if lookup_sku:
         # Clean user search input to pure lowercase alphanumeric
@@ -35,14 +35,16 @@ with tab1:
         df_results = conn.query(query, params={"sku_param": f"%{cleaned_search}%"}, ttl=0)
         
         if not df_results.empty:
-            st.write("### 📍 Matches Found:")
+            st.write("Результаты поиска:")
             
             # Map out options. We display the exact SKU format from DB so worker is confident.
             options = {}
             for idx, row in df_results.iterrows():
-                date_str = row['last_replenished'].strftime("%Y-%m-%d") if row['last_replenished'] else "Unknown"
-                label = f"📦 SKU: {row['sku']} | Bin: {row['location']} | Stock: {row['quantity']} (Refreshed: {date_str})"
-                # Key using a unique string combo of SKU + Location
+                date_str = row['last_replenished'].strftime("%d.%m.%Y") if row['last_replenished'] else "Unknown"
+                
+                # Highlights SKU in orange and Location in blue
+                label = f"📦 Артикул: :orange[{row['sku']}] | Место: :blue[{row['location']}] | Количество: {row['quantity']} (Пополнено: {date_str})"
+                
                 options[f"{row['sku']}|||{row['location']}"] = {
                     "label": label, 
                     "sku": row['sku'],
@@ -50,14 +52,14 @@ with tab1:
                     "current_qty": int(row['quantity'])
                 }
             
-            selected_key = st.radio("Select the specific item/bin you are pulling from:", options=list(options.keys()), format_func=lambda x: options[x]["label"])
+            selected_key = st.radio("Выберите из какого места вы берёте товар:", options=list(options.keys()), format_func=lambda x: options[x]["label"])
             chosen = options[selected_key]
             
-            take_qty = st.number_input("Quantity to take:", min_value=1, max_value=chosen["current_qty"], value=1, step=1)
+            take_qty = st.number_input("Количество:", min_value=1, max_value=chosen["current_qty"], value=1, step=1)
             
-            if st.button("🔴 Confirm Items Taken"):
+            if st.button("Подтвердить изъятие товара"):
                 if take_qty > chosen["current_qty"]:
-                    st.error(f"❌ Operation blocked. Only {chosen['current_qty']} units exist.")
+                    st.error(f"❌ Недостаточно товара. Есть только {chosen['current_qty']} штук.")
                 else:
                     with conn.session as session:
                         if take_qty == chosen["current_qty"]:
@@ -65,27 +67,27 @@ with tab1:
                                 text(f"DELETE FROM {TABLE_NAME} WHERE sku = :sku AND location = :loc;"), 
                                 {"sku": chosen["sku"], "loc": chosen["location"]}
                             )
-                            st.toast(f"✅ {chosen['sku']} at {chosen['location']} cleared from system.")
+                            st.toast(f"✅ {chosen['sku']} изъято из {chosen['location']}.")
                         else:
                             new_qty = chosen["current_qty"] - take_qty
                             session.execute(
                                 text(f"UPDATE {TABLE_NAME} SET quantity = :new_qty WHERE sku = :sku AND location = :loc;"),
                                 {"new_qty": new_qty, "sku": chosen["sku"], "loc": chosen["location"]}
                             )
-                            st.toast(f"✅ Subtracted {take_qty} units.")
+                            st.toast(f"✅ Изъято {take_qty} штук.")
                         session.commit()
                     st.rerun()
         else:
-            st.error("❌ No matching SKUs found in database.")
+            st.error("❌ Артикул отсутствует в базе.")
 
     st.markdown("---")
 
-    st.header("➕ Add / Replenish Stock")
+    st.header("➕ Добавить товар")
     with st.form("add_item_form", clear_on_submit=True):
-        raw_sku_input = st.text_input("SKU (Type freely without * or spaces):").strip()
-        new_location = st.text_input("Location Code:").strip()
-        add_qty = st.number_input("Quantity to Add:", min_value=1, value=1, step=1)
-        submit_btn = st.form_submit_button("Save to Database")
+        raw_sku_input = st.text_input("Артикул:").strip()
+        new_location = st.text_input("Место на складе:").strip()
+        add_qty = st.number_input("Количество:", min_value=1, value=1, step=1)
+        submit_btn = st.form_submit_button("Добавить")
         
         if submit_btn:
             if raw_sku_input and new_location:
@@ -94,7 +96,7 @@ with tab1:
                 
                 # 2. Enforce the 8-character rule (LLL + NN + NNN)
                 if len(core_sku) != 8:
-                    st.error(f"❌ Invalid SKU length. Core SKU must be exactly 8 characters (Letters/Numbers). You typed {len(core_sku)} characters.")
+                    st.error(f"❌ Неверная длина артикула.")
                 else:
                     # 3. Reconstruct into target layout: LLL*NN NNN
                     formatted_sku = f"{core_sku[:3]}*{core_sku[3:5]} {core_sku[5:]}"
@@ -109,28 +111,28 @@ with tab1:
                                 text(f"UPDATE {TABLE_NAME} SET quantity = :qty, last_replenished = NOW() WHERE sku = :sku AND location = :loc;"),
                                 {"qty": existing_qty + add_qty, "sku": formatted_sku, "loc": new_location}
                             )
-                            st.success(f"✅ Topped up **{formatted_sku}** at **{new_location}**. Total: {existing_qty + add_qty}.")
+                            st.success(f"✅ Артикул **{formatted_sku}** в **{new_location}** пополнен. Всего: {existing_qty + add_qty} штук.")
                         else:
                             session.execute(
                                 text(f"INSERT INTO {TABLE_NAME} (sku, location, quantity) VALUES (:sku, :loc, :qty);"),
                                 {"sku": formatted_sku, "loc": new_location, "qty": add_qty}
                             )
-                            st.success(f"✅ Successfully auto-formatted and saved as **{formatted_sku}** at **{new_location}**.")
+                            st.success(f"✅ Артикул **{formatted_sku}** добавлен в **{new_location}**.")
                         session.commit()
             else:
-                st.warning("Please fill out all fields before submitting.")
+                st.warning("Пожалуйста, заполните все поля.")
 
 # =========================================================
 # TAB 2: INVENTORY BROWSER (SEARCH & SHELF VIEW)
 # =========================================================
 with tab2:
-    st.header("📋 Live Inventory View")
+    st.header("📋 Список товаров на складе")
     
     search_col1, search_col2 = st.columns(2)
     with search_col1:
-        browser_sku = st.text_input("Fuzzy SKU Search (Ignores format):", value="", key="browser_sku_input").strip()
+        browser_sku = st.text_input("Поиск по артикулу:", value="", key="browser_sku_input").strip()
     with search_col2:
-        search_loc = st.text_input("Filter by Location Code:", value="", key="browser_loc").strip()
+        search_loc = st.text_input("Поиск по месту:", value="", key="browser_loc").strip()
     
     base_query = f"SELECT sku, location, quantity, last_replenished FROM {TABLE_NAME} WHERE 1=1"
     params = {}
@@ -149,11 +151,11 @@ with tab2:
     
     if not df_all.empty:
         df_display = df_all.copy()
-        df_display.columns = ["SKU (Formatted)", "Location / Coordinate", "Quantity On Hand", "Last Replenished"]
-        if df_display["Last Replenished"].dt.tz is not None:
-            df_display["Last Replenished"] = df_display["Last Replenished"].dt.tz_localize(None)
+        df_display.columns = ["Артикул", "Место на складе", "Количество", "Последнее пополнение"]
+        if df_display["Последнее пополнение"].dt.tz is not None:
+            df_display["Последнее пополнение"] = df_display["Последнее пополнение"].dt.tz_localize(None)
             
         st.dataframe(df_display, use_container_width=True, hide_index=True)
-        st.caption(f"Showing {len(df_display)} records matching filters.")
+        st.caption(f"Найдено {len(df_display)} .")
     else:
-        st.info("No items match the current search filters.")
+        st.info("Товары не найдены.")
