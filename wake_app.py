@@ -6,7 +6,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 # 🔗 REPLACE WITH YOUR ACTUAL STREAMLIT APP URL
-URL = "https://your-app-subdomain.streamlit.app" 
+URL = "https://tvoy-bagazh-sklad.streamlit.app/" 
 
 options = Options()
 options.add_argument("--headless")
